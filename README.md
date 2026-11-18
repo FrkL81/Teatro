@@ -1,3 +1,4 @@
+<!-- Portadas: recursos/portada.png (1280x480) y recursos/portada-2x.jpeg (4096x1536, alta resolucion) -->
 <p align="center">
   <img src="recursos/portada.png" alt="Teatro — Motor de Ficción Interactiva" width="720">
 </p>
