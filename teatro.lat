@@ -1,242 +1,234 @@
 ###############################################################################
-# PROGRAMA: Teatro 0.5
-# CREADO  : Enero del 2026
-# VERSION : 0.5
-# AUTOR   : Lukeitor
-# OBJETIVO: Un módulo para hacer juegos de texto interactivo con la consola.
-# Github del proyecto: https://github.com/lukeitorld/Teatro <--Hay ejemplos de uso
+# PROGRAMA: Teatro 0.6
+# CREADO  : Enero del 2026 (v0.1-v0.5, Lukeitor) · Noviembre del 2026 (v0.6)
+# VERSION : 0.6
+# AUTOR   : Lukeitor (@lukeitorld) — idea, arquitectura de escenas y motor original
+#           Migración a Latino.NET v1.0.81 : Lázaro / FrkL81
+# OBJETIVO: Motor de juegos de texto interactivo para la consola.
+# PATRON  : Factory (CrearTeatro) con estado privado (local) + clonar() en el
+#           historial. Sin contaminar el ambito global.
+# COMPAT  : Latino.NET v1.0.81 o superior.
+#
+# Cambios de v0.5 a v0.6:
+#   - incluir("teatro") ya no se asigna: incluir devuelve nulo en v1.0.81.
+#     Ahora se instancia con  teatro = CrearTeatro().
+#   - El estado es local a la fabrica (encapsulado) y se devuelve por interfaz.
+#   - historia guarda CLONES (clonar) para evitar el aliasing de v0.5.
+#   - armar_cuerpo parte por palabras y respeta el ancho (fix del desbordamiento).
+#   - procesar_entrada valida igualdad exacta ("1", "2", "3"), no contiene.
+#   - Se eliminan las auto-referencias rotas teatro.metodos.* / teatro.estado.*.
 ###############################################################################
-//Esta es la versión final, salvo que halya errores para corregir
-//Errores sin solución: A veces el texto se va más allá de lo indicado por
-//la configuración ancho. No lo pude arreglar.
-/* Características:
-    -Cargar escenas en la consola.
-    -Cambiar la escena que se muestra.
-    -Ejecutar métodos del módulo o funciones del juego al seleccionar una opción.
-*/
-estado = {
-    "colores" : {"resetear":"\033[0m","negrita":"\033[1m","italicas":"\033[3m","subrayado":"\033[4m","parpadeo":"\033[5m","tachado":"\033[9m ","titulo":"\033[38;2;0;191;255m","subtitulo":"\033[38;2;30;58;138m","texto":"\033[38;2;192;192;192m","opciones":"\033[38;2;64;224;208m","exito":"\033[38;2;255;215;0m","mal":"\033[38;2;220;20;60m","resaltado":"\033[38;2;138;43;226m"},
-    "configuracion" : {
+
+funcion CrearTeatro(configUsuario = nulo)
+
+    # -- 1. Configuracion por defecto, fusionable por el usuario ---------------
+    local config = {
         "ancho": 100
-    },
-    "historia" : [],
-    "escena_actual" : {
-        "nombre": "",
-        "descripcion": "",
-        "id": 0,
-        "opciones": []
-    },
-    "escena_anterior" : {
-        "nombre": "",
-        "descripcion": "",
-        "id": 0,
-        "opciones": []
     }
-}
+    si configUsuario != nulo
+        para k en dic.llaves(configUsuario)
+            config[k] = configUsuario[k]
+        fin
+    fin
 
-metodos = {
-    "cambiar_escena": funcion(escena)
-        lista.agregar(estado.historia, estado.escena_actual)
-        estado.escena_anterior.nombre = estado.escena_actual.nombre
-        estado.escena_anterior.descripcion = estado.escena_actual.descripcion
-        estado.escena_anterior.id = estado.escena_actual.id
-        estado.escena_anterior.opciones = estado.escena_actual.opciones
-        
+    # -- 2. Estado privado del motor -------------------------------------------
+    local estado = {
+        "colores" : {
+            "resetear"  : "\033[0m",
+            "negrita"   : "\033[1m",
+            "italicas"  : "\033[3m",
+            "subrayado" : "\033[4m",
+            "parpadeo"  : "\033[5m",
+            "tachado"   : "\033[9m ",
+            "titulo"    : "\033[38;2;0;191;255m",
+            "subtitulo" : "\033[38;2;30;58;138m",
+            "texto"     : "\033[38;2;192;192;192m",
+            "opciones"  : "\033[38;2;64;224;208m",
+            "exito"     : "\033[38;2;255;215;0m",
+            "mal"       : "\033[38;2;220;20;60m",
+            "resaltado" : "\033[38;2;138;43;226m"
+        },
+        "configuracion" : config,
+        "historia" : [],
+        "escena_actual" : {
+            "nombre" : "",
+            "descripcion" : "",
+            "id" : 0,
+            "opciones" : []
+        },
+        "escena_anterior" : {
+            "nombre" : "",
+            "descripcion" : "",
+            "id" : 0,
+            "opciones" : []
+        }
+    }
 
-        estado.escena_actual.nombre = escena.nombre
-        estado.escena_actual.descripcion = escena.descripcion
-        estado.escena_actual.id = escena.id
-        estado.escena_actual.opciones = escena.opciones
-        
-        
+    # -- 3. Utilidades internas -------------------------------------------------
 
-        titulo = ""
-        largo = mate.abs((estado.configuracion.ancho - cadena.longitud(estado.escena_actual.nombre))  / 2)
-        bordes = ""
-        si ((cadena.longitud(estado.escena_actual.nombre) + largo*2) >= estado.configuracion.ancho)
+    # Texto visible de una opcion: lo que esta antes del marcador ">"
+    local extraer_texto = funcion(opcion)
+        local idx = cadena.ultimo_indice(opcion, ">")
+        si idx < 0
+            retornar opcion
+        fin
+        retornar cadena.recortar(cadena.subcadena(opcion, 0, idx))
+    fin
+
+    # Centra el titulo entre bordes "="
+    local centrar_encabezado = funcion(texto)
+        local ancho = estado.configuracion.ancho
+        local largo = mate.abs((ancho - cadena.longitud(texto)) / 2)
+        si (cadena.longitud(texto) + largo * 2) >= ancho
             largo = largo - 1
         fin
+        si largo < 0
+            largo = 0
+        fin
+        local bordes = ""
         repetir
-            bordes = bordes.."="
-        hasta (cadena.longitud(bordes)>=largo)
-        titulo = bordes..estado.escena_actual.nombre..bordes
-        
-
-        
-        limpiar()
-        escribir (estado.colores.negrita..estado.colores.subrayado..estado.colores.titulo.."╞ "..titulo.."╣"..estado.colores.resetear)
-        
-        cuerpo = metodos.armar_cuerpo(escena.descripcion)
-        escribir (estado.colores.texto..cuerpo..estado.colores.resetear)
-        
-        
-        opciones_sin_comandos = metodos.procesar_opciones(escena.opciones)
-        
-
-        escribir (estado.colores.opciones..opciones_sin_comandos[0].."\n"..opciones_sin_comandos[1].."\n"..opciones_sin_comandos[2]..estado.colores.resetear)
-    fin,
-    "armar_cuerpo": funcion (descripcion)
-        texto = ""
-        ancho = estado.configuracion.ancho
-
-        si (metodos.la_cadena_contiene(descripcion,"\n"))
-            en_lista = metodos.separar_cadena(descripcion,"\n")
-            num_renglones = lista.longitud(en_lista)
-
-            desde (i=0; i<num_renglones; i++)
-                largo = cadena.longitud(en_lista[i])
-                desde (t=0; t<largo; t=t+ancho)
-                    fragmento = cadena.subcadena(en_lista[i], t, ancho)
-                    texto = texto .. fragmento .. "\n"
-                fin
-            fin
-        sino
-            longitud_total = cadena.longitud(descripcion)
-            desde (i=0; i<longitud_total; i=i+ancho)
-                fragmento = cadena.subcadena(descripcion, i, ancho)
-                texto = texto .. fragmento .. "\n"
-            fin
-        fin
-        retorno texto
-    fin,
-    "procesar_opciones": funcion(opciones)
-        op = ["a","b","c"]
-        
-        si (cadena.contiene(opciones[0],">vacio<"))
-            op[0] = ""
-        sino
-            op[0] = "(1) "..cadena.subcadena(opciones[0],0,cadena.ultimo_indice(opciones[0],">") - 1)
-        fin
-        
-        si (cadena.contiene(opciones[1],">vacio<"))
-            op[1] = ""
-        sino
-            op[1] = "(2) "..cadena.subcadena(opciones[1],0,cadena.ultimo_indice(opciones[1],">") - 1)
-        fin
-        
-        si (cadena.contiene(opciones[2],">vacio<"))
-            op[2] = ""
-        sino
-            op[2] = "(3) "..cadena.subcadena(opciones[2],0,cadena.ultimo_indice(opciones[2],">") - 1)
-        fin
-        retornar op
-    fin,
-    "procesar_entrada": funcion(entrada)
-        entr = acadena(entrada)
-        si (cadena.contiene(entr,"1") || cadena.contiene(entr,"2") || cadena.contiene(entr,"3"))
-            activo = verdadero
-            mientras (activo)
-                si (entrada == 1)
-                    //escribir (teatro.estado.escena_actual.opciones[0])
-                    metodos.procesar_opcion(estado.escena_actual.opciones[0])
-                    activo = falso
-                    romper
-                osi (entrada == 2)
-                    //escribir (teatro.estado.escena_actual.opciones[1])
-                    metodos.procesar_opcion(estado.escena_actual.opciones[1])
-                    activo = falso
-                    romper
-                osi (entrada == 3)
-                    metodos.procesar_opcion(estado.escena_actual.opciones[2])
-                    activo = falso
-                    romper
-                fin
-            fin
-        sino
-            teatro.metodos.cambiar_escena(teatro.estado.escena_actual)
-            escribir (teatro.estado.colores.mal.."Entrada incorrecta, recuerda que solo valen las entradas 1, 2 y 3."..teatro.estado.colores.resetear)
-        fin
-    fin,
-    "procesar_opcion": funcion(opcion)
-        //busca y ejecuta una función: >nombre_funcion<
-        primer_indice = cadena.ultimo_indice(opcion,">") + 1
-        num_caracteres = cadena.ultimo_indice(opcion,"<") - cadena.ultimo_indice(opcion,">") - 1
-        //escribir ("La longitud es: ".. primer_indice)
-        si (!cadena.contiene(opcion,"<"))
-            escribir ("Entrada incorrecta, intenta de nuevo.")
-            teatro.metodos.cambiar_escena(teatro.estado.escena_actual)
-        osi (cadena.contiene(opcion,">vacio<"))
-            teatro.metodos.cambiar_escena(teatro.estado.escena_actual)
-            escribir (teatro.estado.colores.mal.."Entrada incorrecta, opción inválida"..teatro.estado.colores.resetear)
-        sino
-            comando = cadena.subcadena(opcion,primer_indice,num_caracteres)
-            cadena.ejecutar(comando)
-        fin
-        //escribir ("el comando es "..comando)
-    fin,
-    "la_cadena_contiene": funcion(texto, sub)
-    longitud_texto = cadena.longitud(texto)
-    longitud_sub = cadena.longitud(sub)
-
-    desde (i = 0; i <= longitud_texto - longitud_sub; i = i + 1)
-        fragmento = cadena.subcadena(texto, i, longitud_sub)
-        si (fragmento == sub)
-            retorno verdadero
-        fin
+            bordes = bordes .. "="
+        hasta (cadena.longitud(bordes) >= largo)
+        retornar bordes .. texto .. bordes
     fin
 
-    retorno falso
-fin,
-"separar_cadena": funcion(texto, separador)
-    partes = []
-    actual = ""
-
-    longitud = cadena.longitud(texto)
-    longitud_sep = cadena.longitud(separador)
-
-    si longitud_sep == 0
-        // si el separador está vacío, devolvemos el texto completo como única parte
-        partes[0] = texto
-        retorno partes
+    # Particion por palabras: acumula hasta el ancho sin cortar palabras.
+    # Solo trocea una palabra cuando ella sola supera el ancho (inevitable).
+    local ajustar_parrafo = funcion(texto, ancho)
+        local palabras = cadena.separar(texto, " ")
+        local total = lista.longitud(palabras)
+        local linea = ""
+        local salida = ""
+        local j = 0
+        local w = ""
+        mientras j < total
+            w = palabras[j]
+            si cadena.longitud(w) > 0
+                si cadena.longitud(w) > ancho
+                    si cadena.longitud(linea) > 0
+                        salida = salida .. linea .. "\n"
+                        linea = ""
+                    fin
+                    mientras cadena.longitud(w) > ancho
+                        salida = salida .. cadena.subcadena(w, 0, ancho) .. "\n"
+                        w = cadena.subcadena(w, ancho, cadena.longitud(w) - ancho)
+                    fin
+                    linea = w
+                sino
+                    si cadena.longitud(linea) == 0
+                        linea = w
+                    osi (cadena.longitud(linea) + 1 + cadena.longitud(w)) <= ancho
+                        linea = linea .. " " .. w
+                    sino
+                        salida = salida .. linea .. "\n"
+                        linea = w
+                    fin
+                fin
+            fin
+            j = j + 1
+        fin
+        si cadena.longitud(linea) > 0
+            salida = salida .. linea .. "\n"
+        fin
+        retornar salida
     fin
 
-    i = 0
-    mientras (i < longitud)
-        // mirar un fragmento del tamaño del separador
-        si (i + longitud_sep) <= longitud
-            probe = cadena.subcadena(texto, i, longitud_sep)
-        sino
-            probe = "" // no hay suficiente texto para igualar el separador
-        fin
-
-        si (probe == separador)
-            // “flush” del bloque acumulado
-            idx = lista.longitud(partes)
-            partes[idx] = actual
-            actual = ""
-            i = i + longitud_sep
-        sino
-            // agregar un solo carácter al bloque
-            c = cadena.subcadena(texto, i, 1)
-            actual = actual .. c
+    # Envuelve el texto al ancho, respetando parrafos ("\n") y palabras.
+    local armar_cuerpo = funcion(descripcion)
+        local ancho = estado.configuracion.ancho
+        local parrafos = cadena.separar(descripcion, "\n")
+        local total = lista.longitud(parrafos)
+        local salida = ""
+        local i = 0
+        mientras i < total
+            local p = cadena.recortar(parrafos[i])
+            si cadena.longitud(p) == 0
+                salida = salida .. "\n"
+            sino
+                salida = salida .. ajustar_parrafo(p, ancho) .. "\n"
+            fin
             i = i + 1
         fin
+        retornar salida
     fin
 
-    // último fragmento: apendear por índice (evita agregar(...))
-    si (cadena.longitud(actual) > 0) || (lista.longitud(partes) == 0)
-        idx = lista.longitud(partes)
-        partes[idx] = actual
+    # Lineas visibles de las opciones (la numeracion sigue la posicion real).
+    local procesar_opciones = funcion(opciones)
+        local visibles = []
+        local total = lista.longitud(opciones)
+        local i = 0
+        mientras i < total
+            local op = opciones[i]
+            si no cadena.contiene(op, ">vacio<")
+                lista.agregar(visibles, "(" .. acadena(i + 1) .. ") " .. extraer_texto(op))
+            fin
+            i = i + 1
+        fin
+        retornar visibles
     fin
 
-    retorno partes
+    # Ejecuta el comando embebido en una opcion (sintaxis del autor: >comando<).
+    local procesar_opcion = funcion(opcion)
+        si cadena.contiene(opcion, ">vacio<")
+            retornar falso
+        fin
+        local idxA = cadena.ultimo_indice(opcion, ">")
+        local idxB = cadena.ultimo_indice(opcion, "<")
+        si idxA < 0 ó idxB < 0 ó idxB <= idxA
+            escribir(estado.colores.mal .. "Entrada incorrecta, intenta de nuevo." .. estado.colores.resetear)
+            retornar falso
+        fin
+        local comando = cadena.subcadena(opcion, idxA + 1, idxB - idxA - 1)
+        si cadena.longitud(comando) == 0
+            retornar falso
+        fin
+        cadena.ejecutar(comando)
+        retornar cierto
     fin
-}
 
-/*//Para hacer pruebas rápidas
-menu = {
-    "nombre": "Menu Principal",
-    "descripcion": "Este es un menú principal",
-    "id": 0,
-    "opciones": ["opción 1", "opción 2", "opción 3"]
-    
-}
-metodos.cambiar_escena(menu)
-*/
+    # Validacion exacta de la entrada: solo "1", "2" o "3".
+    local procesar_entrada = funcion(entrada)
+        local e = cadena.recortar(acadena(entrada))
+        si e == "1" ó e == "2" ó e == "3"
+            local idx = anumero(e) - 1
+            si idx < lista.longitud(estado.escena_actual.opciones)
+                procesar_opcion(estado.escena_actual.opciones[idx])
+            fin
+        sino
+            cambiar_escena(estado.escena_actual)
+            escribir(estado.colores.mal .. "Entrada incorrecta, recuerda que solo valen las entradas 1, 2 y 3." .. estado.colores.resetear)
+        fin
+    fin
 
+    # -- 4. Metodo principal: carga y renderiza una escena ---------------------
+    local cambiar_escena = funcion(escena)
+        # archivar la escena actual (clonada: evita el aliasing de v0.5)
+        lista.agregar(estado.historia, clonar(estado.escena_actual))
+        # OJO: en v1.0.81 los diccionarios solo admiten LECTURA por punto;
+        # la escritura exige corchetes (d["clave"] = valor).
+        estado["escena_anterior"] = clonar(estado.escena_actual)
+        estado["escena_actual"] = clonar(escena)
 
-// Diccionario que se retorna y al cual se accede desde otros archivos
-retornar {
-    "estado": estado,
-    "metodos": metodos
-}
+        limpiar()
+        local titulo = centrar_encabezado(estado.escena_actual.nombre)
+        escribir(estado.colores.negrita .. estado.colores.subrayado .. estado.colores.titulo .. "╞ " .. titulo .. "╣" .. estado.colores.resetear)
+
+        local cuerpo = armar_cuerpo(estado.escena_actual.descripcion)
+        escribir(estado.colores.texto .. cuerpo .. estado.colores.resetear)
+
+        local visibles = procesar_opciones(estado.escena_actual.opciones)
+        si lista.longitud(visibles) > 0
+            escribir(estado.colores.opciones .. lista.separar(visibles, "\n") .. estado.colores.resetear)
+        fin
+    fin
+
+    # -- 5. Interfaz publica ----------------------------------------------------
+    retornar {
+        "estado": estado,
+        "cambiar_escena": cambiar_escena,
+        "procesar_entrada": procesar_entrada,
+        "procesar_opcion": procesar_opcion,
+        "armar_cuerpo": armar_cuerpo,
+        "centrar_encabezado": centrar_encabezado
+    }
+fin
