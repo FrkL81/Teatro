@@ -7,7 +7,15 @@
 # OBJETIVO: Motor de juegos de texto interactivo para la consola.
 # PATRON  : Factory (CrearTeatro) con estado privado (local) + clonar() en el
 #           historial. Sin contaminar el ambito global.
-# COMPAT  : Latino.NET v1.0.81 o superior.
+# COMPAT  : Latino.NET v1.0.81 o servidor.
+#
+# POLITICA DE AMBITO (Regla 6 del Mantra + ADR-009):
+#   En Latino.NET una variable nueva nacida dentro de una funcion YA es local al
+#   marco de ejecucion; anteponer 'local' a temporales, contadores o iteradores
+#   es redundante ("Efecto Lua"). Aqui 'local' se reserva EXCLUSIVAMENTE para
+#   las raices de la fabrica que deben permanecer privadas e inaccesibles desde
+#   fuera mediante clausura lexica (el Patron Boveda): 'config', 'estado' y las
+#   ocho funciones internas del motor.
 #
 # Cambios de v0.5 a v0.6:
 #   - incluir("teatro") ya no se asigna: incluir devuelve nulo en v1.0.81.
@@ -31,7 +39,7 @@ funcion CrearTeatro(configUsuario = nulo)
         fin
     fin
 
-    # -- 2. Estado privado del motor -------------------------------------------
+    # -- 2. Estado privado del motor (Patron Boveda) ----------------------------
     local estado = {
         "colores" : {
             "resetear"  : "\033[0m",
@@ -64,11 +72,11 @@ funcion CrearTeatro(configUsuario = nulo)
         }
     }
 
-    # -- 3. Utilidades internas -------------------------------------------------
+    # -- 3. Funciones internas del motor (privadas: Patrón Bóveda) --------------
 
     # Texto visible de una opcion: lo que esta antes del marcador ">"
     local extraer_texto = funcion(opcion)
-        local idx = cadena.ultimo_indice(opcion, ">")
+        idx = cadena.ultimo_indice(opcion, ">")
         si idx < 0
             retornar opcion
         fin
@@ -77,15 +85,15 @@ funcion CrearTeatro(configUsuario = nulo)
 
     # Centra el titulo entre bordes "="
     local centrar_encabezado = funcion(texto)
-        local ancho = estado.configuracion.ancho
-        local largo = mate.abs((ancho - cadena.longitud(texto)) / 2)
+        ancho = estado.configuracion.ancho
+        largo = mate.abs((ancho - cadena.longitud(texto)) / 2)
         si (cadena.longitud(texto) + largo * 2) >= ancho
             largo = largo - 1
         fin
         si largo < 0
             largo = 0
         fin
-        local bordes = ""
+        bordes = ""
         repetir
             bordes = bordes .. "="
         hasta (cadena.longitud(bordes) >= largo)
@@ -95,12 +103,12 @@ funcion CrearTeatro(configUsuario = nulo)
     # Particion por palabras: acumula hasta el ancho sin cortar palabras.
     # Solo trocea una palabra cuando ella sola supera el ancho (inevitable).
     local ajustar_parrafo = funcion(texto, ancho)
-        local palabras = cadena.separar(texto, " ")
-        local total = lista.longitud(palabras)
-        local linea = ""
-        local salida = ""
-        local j = 0
-        local w = ""
+        palabras = cadena.separar(texto, " ")
+        total = lista.longitud(palabras)
+        linea = ""
+        salida = ""
+        j = 0
+        w = ""
         mientras j < total
             w = palabras[j]
             si cadena.longitud(w) > 0
@@ -135,13 +143,13 @@ funcion CrearTeatro(configUsuario = nulo)
 
     # Envuelve el texto al ancho, respetando parrafos ("\n") y palabras.
     local armar_cuerpo = funcion(descripcion)
-        local ancho = estado.configuracion.ancho
-        local parrafos = cadena.separar(descripcion, "\n")
-        local total = lista.longitud(parrafos)
-        local salida = ""
-        local i = 0
+        ancho = estado.configuracion.ancho
+        parrafos = cadena.separar(descripcion, "\n")
+        total = lista.longitud(parrafos)
+        salida = ""
+        i = 0
         mientras i < total
-            local p = cadena.recortar(parrafos[i])
+            p = cadena.recortar(parrafos[i])
             si cadena.longitud(p) == 0
                 salida = salida .. "\n"
             sino
@@ -154,11 +162,11 @@ funcion CrearTeatro(configUsuario = nulo)
 
     # Lineas visibles de las opciones (la numeracion sigue la posicion real).
     local procesar_opciones = funcion(opciones)
-        local visibles = []
-        local total = lista.longitud(opciones)
-        local i = 0
+        visibles = []
+        total = lista.longitud(opciones)
+        i = 0
         mientras i < total
-            local op = opciones[i]
+            op = opciones[i]
             si no cadena.contiene(op, ">vacio<")
                 lista.agregar(visibles, "(" .. acadena(i + 1) .. ") " .. extraer_texto(op))
             fin
@@ -172,13 +180,13 @@ funcion CrearTeatro(configUsuario = nulo)
         si cadena.contiene(opcion, ">vacio<")
             retornar falso
         fin
-        local idxA = cadena.ultimo_indice(opcion, ">")
-        local idxB = cadena.ultimo_indice(opcion, "<")
+        idxA = cadena.ultimo_indice(opcion, ">")
+        idxB = cadena.ultimo_indice(opcion, "<")
         si idxA < 0 ó idxB < 0 ó idxB <= idxA
             escribir(estado.colores.mal .. "Entrada incorrecta, intenta de nuevo." .. estado.colores.resetear)
             retornar falso
         fin
-        local comando = cadena.subcadena(opcion, idxA + 1, idxB - idxA - 1)
+        comando = cadena.subcadena(opcion, idxA + 1, idxB - idxA - 1)
         si cadena.longitud(comando) == 0
             retornar falso
         fin
@@ -188,9 +196,9 @@ funcion CrearTeatro(configUsuario = nulo)
 
     # Validacion exacta de la entrada: solo "1", "2" o "3".
     local procesar_entrada = funcion(entrada)
-        local e = cadena.recortar(acadena(entrada))
+        e = cadena.recortar(acadena(entrada))
         si e == "1" ó e == "2" ó e == "3"
-            local idx = anumero(e) - 1
+            idx = anumero(e) - 1
             si idx < lista.longitud(estado.escena_actual.opciones)
                 procesar_opcion(estado.escena_actual.opciones[idx])
             fin
@@ -210,13 +218,13 @@ funcion CrearTeatro(configUsuario = nulo)
         estado["escena_actual"] = clonar(escena)
 
         limpiar()
-        local titulo = centrar_encabezado(estado.escena_actual.nombre)
+        titulo = centrar_encabezado(estado.escena_actual.nombre)
         escribir(estado.colores.negrita .. estado.colores.subrayado .. estado.colores.titulo .. "╞ " .. titulo .. "╣" .. estado.colores.resetear)
 
-        local cuerpo = armar_cuerpo(estado.escena_actual.descripcion)
+        cuerpo = armar_cuerpo(estado.escena_actual.descripcion)
         escribir(estado.colores.texto .. cuerpo .. estado.colores.resetear)
 
-        local visibles = procesar_opciones(estado.escena_actual.opciones)
+        visibles = procesar_opciones(estado.escena_actual.opciones)
         si lista.longitud(visibles) > 0
             escribir(estado.colores.opciones .. lista.separar(visibles, "\n") .. estado.colores.resetear)
         fin
